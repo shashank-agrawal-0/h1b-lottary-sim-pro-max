@@ -143,8 +143,7 @@
                 <div class="chart-header">
                     <div class="chart-title">8-Dimensional Probability Matrix</div>
                 </div>
-                <div class="custom-legend" id="customLegend">
-                    </div>
+                <div class="custom-legend" id="customLegend"></div>
                 <div class="chart-container">
                     <canvas id="sweepChart"></canvas>
                 </div>
@@ -156,7 +155,7 @@
                     <div class="terminal-title">matrix-logs ~ <span id="coresCount" style="color:var(--accent)"></span> logical cores</div>
                 </div>
                 <div id="terminal">
-                    <div class="log-line"><span class="log-badge" style="color:#0ea5e9">SYS</span><span class="log-msg">Awaiting command to ignite 13,120 task blocks.</span></div>
+                    <div class="log-line"><span class="log-badge" style="color:#0ea5e9">SYS</span><span class="log-msg">Booting UI Interface. Checking for pre-computed models...</span></div>
                 </div>
             </div>
         </div>
@@ -170,7 +169,6 @@
         const N_LABELS = [];
         for (let i = 100000; i <= 500000; i += 10000) N_LABELS.push(i); 
 
-        // 8 Permutations
         const PROFILES = [
             { id: 'w4_m', label: 'L4 + Master\'s', wage: 4, masters: true, color: '#10b981' }, 
             { id: 'w3_m', label: 'L3 + Master\'s', wage: 3, masters: true, color: '#0ea5e9' }, 
@@ -228,7 +226,6 @@
             }
         });
 
-        // Generate Custom Legend
         const legendContainer = document.getElementById('customLegend');
         PROFILES.forEach((p, index) => {
             const el = document.createElement('div');
@@ -249,78 +246,6 @@
             logQueue.push({ time, level, msg });
         }
 
-        // =========================================================================
-        // DATA EXPORT & IMPORT PIPELINE
-        // =========================================================================
-        function exportJSONData() {
-            if (totalEngineOperations === 0) return;
-            const payload = {
-                timestamp: new Date().toISOString(),
-                totalEngineOperations: totalEngineOperations,
-                completedTasks: completedTasks,
-                PASSES: PASSES,
-                simData: simData
-            };
-            
-            const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `H1B_Matrix_Data_${Date.now()}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
-            queueLog('SYS', `Data serialized and exported successfully.`);
-            flushLogsToTerminal();
-        }
-
-        function importJSONData(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-            
-            queueLog('SYS', `Parsing JSON file: ${file.name}...`);
-            
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                try {
-                    const parsed = JSON.parse(e.target.result);
-                    
-                    // Rehydrate State
-                    simData = parsed.simData;
-                    totalEngineOperations = parsed.totalEngineOperations || 0;
-                    completedTasks = parsed.completedTasks || 0;
-                    
-                    // Force UI Refresh
-                    document.getElementById('uiCount').innerText = totalEngineOperations.toLocaleString();
-                    document.getElementById('uiPasses').innerText = `${PASSES} / ${PASSES} (LOADED)`;
-                    document.getElementById('progressFill').style.width = '100%';
-                    document.getElementById('statusBadge').className = `status-badge status-converged`;
-                    document.getElementById('statusText').innerText = 'LOADED';
-                    document.getElementById('saveBtn').disabled = false;
-                    
-                    // Redraw Chart
-                    PROFILES.forEach((p, index) => {
-                        let newData = N_LABELS.map(n => {
-                            if (!simData[p.id] || !simData[p.id][n] || simData[p.id][n].runs === 0) return null;
-                            return ((simData[p.id][n].wins / simData[p.id][n].runs) * 100).toFixed(2);
-                        });
-                        sweepChart.data.datasets[index].data = newData;
-                    });
-                    sweepChart.update();
-                    
-                    queueLog('SYS', `State rehydration complete. Interactive chart restored.`);
-                    flushLogsToTerminal();
-                } catch (err) {
-                    alert("Invalid file format. Please upload a valid Matrix JSON file.");
-                    queueLog('SYS', `ERROR: Failed to parse uploaded JSON.`);
-                    flushLogsToTerminal();
-                }
-            };
-            reader.readAsText(file);
-            // Reset input so the same file can be loaded again if needed
-            event.target.value = '';
-        }
-
-        // Dedicated flush function to push logs immediately when UI loop isn't running
         function flushLogsToTerminal() {
             if (logQueue.length === 0) return;
             const terminal = document.getElementById('terminal');
@@ -336,16 +261,109 @@
         }
 
         // =========================================================================
+        // DATA AUTO-LOADER (NEW)
+        // =========================================================================
+        async function autoLoadData() {
+            try {
+                queueLog('SYS', 'Attempting to fetch pre-computed dataset from server...');
+                flushLogsToTerminal();
+                
+                const response = await fetch('./preload-data.json');
+                if (!response.ok) {
+                    queueLog('SYS', 'No preload file found on server. Awaiting manual execution.');
+                    flushLogsToTerminal();
+                    return;
+                }
+                
+                const parsed = await response.json();
+                
+                // Rehydrate State
+                simData = parsed.simData;
+                totalEngineOperations = parsed.totalEngineOperations || 0;
+                completedTasks = parsed.completedTasks || 0;
+                
+                // Update UI visually
+                document.getElementById('uiCount').innerText = totalEngineOperations.toLocaleString();
+                document.getElementById('uiPasses').innerText = `${PASSES} / ${PASSES} (PRELOADED)`;
+                document.getElementById('progressFill').style.width = '100%';
+                document.getElementById('statusBadge').className = `status-badge status-converged`;
+                document.getElementById('statusText').innerText = 'LOADED';
+                document.getElementById('saveBtn').disabled = false;
+                
+                PROFILES.forEach((p, index) => {
+                    let newData = N_LABELS.map(n => {
+                        if (!simData[p.id] || !simData[p.id][n] || simData[p.id][n].runs === 0) return null;
+                        return ((simData[p.id][n].wins / simData[p.id][n].runs) * 100).toFixed(2);
+                    });
+                    sweepChart.data.datasets[index].data = newData;
+                });
+                sweepChart.update();
+                
+                queueLog('SYS', 'Pre-computed matrix parsed and injected into rendering engine successfully.');
+                flushLogsToTerminal();
+            } catch (error) {
+                queueLog('SYS', 'Failed to fetch preload data. Awaiting manual execution.');
+                flushLogsToTerminal();
+            }
+        }
+
+        // Fire auto-load immediately when DOM is ready
+        window.addEventListener('DOMContentLoaded', autoLoadData);
+
+        // =========================================================================
+        // MANUAL EXPORT & IMPORT PIPELINE
+        // =========================================================================
+        function exportJSONData() {
+            if (totalEngineOperations === 0) return;
+            const payload = { timestamp: new Date().toISOString(), totalEngineOperations: totalEngineOperations, completedTasks: completedTasks, PASSES: PASSES, simData: simData };
+            const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = `H1B_Matrix_Data_${Date.now()}.json`; a.click();
+            URL.revokeObjectURL(url);
+            queueLog('SYS', `Data serialized and exported successfully.`);
+            flushLogsToTerminal();
+        }
+
+        function importJSONData(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            queueLog('SYS', `Parsing JSON file: ${file.name}...`);
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const parsed = JSON.parse(e.target.result);
+                    simData = parsed.simData; totalEngineOperations = parsed.totalEngineOperations || 0; completedTasks = parsed.completedTasks || 0;
+                    document.getElementById('uiCount').innerText = totalEngineOperations.toLocaleString();
+                    document.getElementById('uiPasses').innerText = `${PASSES} / ${PASSES} (LOADED)`;
+                    document.getElementById('progressFill').style.width = '100%';
+                    document.getElementById('statusBadge').className = `status-badge status-converged`; document.getElementById('statusText').innerText = 'LOADED';
+                    document.getElementById('saveBtn').disabled = false;
+                    PROFILES.forEach((p, index) => {
+                        let newData = N_LABELS.map(n => {
+                            if (!simData[p.id] || !simData[p.id][n] || simData[p.id][n].runs === 0) return null;
+                            return ((simData[p.id][n].wins / simData[p.id][n].runs) * 100).toFixed(2);
+                        });
+                        sweepChart.data.datasets[index].data = newData;
+                    });
+                    sweepChart.update();
+                    queueLog('SYS', `State rehydration complete. Interactive chart restored.`); flushLogsToTerminal();
+                } catch (err) {
+                    alert("Invalid file format. Please upload a valid Matrix JSON file.");
+                    queueLog('SYS', `ERROR: Failed to parse uploaded JSON.`); flushLogsToTerminal();
+                }
+            };
+            reader.readAsText(file); event.target.value = '';
+        }
+
+        // =========================================================================
 
         function updateUI() {
             if (!isRunning) return;
-
             document.getElementById('uiCount').innerText = totalEngineOperations.toLocaleString();
             let currentPass = Math.floor(completedTasks / (N_LABELS.length * PROFILES.length));
             document.getElementById('uiPasses').innerText = `${currentPass} / ${PASSES}`;
             document.getElementById('progressFill').style.width = `${(completedTasks / TOTAL_TASKS) * 100}%`;
 
-            // Update Chart Curve for all 8 Datasets
             PROFILES.forEach((p, index) => {
                 let newData = N_LABELS.map(n => {
                     if (simData[p.id][n].runs === 0) return null;
@@ -354,7 +372,6 @@
                 sweepChart.data.datasets[index].data = newData;
             });
             sweepChart.update();
-
             flushLogsToTerminal();
             animationFrameId = requestAnimationFrame(updateUI);
         }
@@ -445,7 +462,6 @@
             document.getElementById('statusBadge').className = `status-badge status-running`;
             document.getElementById('statusText').innerText = 'COMPUTING MATRIX';
             
-            // Reset Data
             PROFILES.forEach(p => { N_LABELS.forEach(n => { simData[p.id][n] = { runs: 0, wins: 0 }; }); });
             sweepChart.data.datasets.forEach(ds => ds.data = Array(N_LABELS.length).fill(null));
             sweepChart.update();
@@ -474,10 +490,6 @@
                         simData[e.data.profileId][e.data.N].runs += e.data.runs;
                         totalEngineOperations += e.data.runs;
                         completedTasks++;
-                        
-                        if (completedTasks % 200 === 0) {
-                            queueLog('RUN', `Processed 200 micro-batches. Pass ${(completedTasks / (N_LABELS.length * PROFILES.length)).toFixed(1)} / ${PASSES}`);
-                        }
                         dispatchTask(worker, e.data.workerId);
                     }
                 };
